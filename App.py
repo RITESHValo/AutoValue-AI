@@ -3,15 +3,13 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import sqlite3
-import hashlib
-import hmac
 import joblib
 import plotly.express as px
 from datetime import datetime
 from pathlib import Path
 
 # =====================================================
-# AUTO VALUE AI - COMPLETE APPLICATION
+# AUTOVALUE AI - NO LOGIN VERSION
 # =====================================================
 
 st.set_page_config(
@@ -76,7 +74,6 @@ h2, h3 {
     border-radius: 20px;
     padding: 25px;
     box-shadow: 0 15px 45px rgba(0,0,0,.25);
-    animation: loginAppear .4s ease-out;
 }
 
 .stFormSubmitButton button,
@@ -99,11 +96,6 @@ h2, h3 {
     border-color: #93c5fd !important;
 }
 
-.stFormSubmitButton button:active,
-.stButton button:active {
-    transform: scale(.98);
-}
-
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input {
     background: #0b1324 !important;
@@ -111,12 +103,6 @@ h2, h3 {
     border: 1px solid #30415e !important;
     border-radius: 11px !important;
     min-height: 42px;
-}
-
-[data-testid="stTextInput"] input:focus,
-[data-testid="stNumberInput"] input:focus {
-    border-color: #60a5fa !important;
-    box-shadow: 0 0 0 3px rgba(59,130,246,.20) !important;
 }
 
 [data-baseweb="select"] > div {
@@ -171,23 +157,12 @@ hr {
 div[data-testid="stAlert"] {
     border-radius: 12px;
 }
-
-@keyframes loginAppear {
-    from {
-        opacity: 0;
-        transform: translateY(10px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
 </style>
 """, unsafe_allow_html=True)
 
 
 # =====================================================
-# DATABASE
+# DATABASE - SHARED PREDICTION HISTORY
 # =====================================================
 
 def get_connection():
@@ -196,15 +171,6 @@ def get_connection():
 
 def init_database():
     with get_connection() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password_hash TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-        """)
-
         conn.execute("""
             CREATE TABLE IF NOT EXISTS prediction_history (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,52 +184,16 @@ def init_database():
         """)
 
 
-def hash_password(password):
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
-
-
-def create_user(username, password):
-    try:
-        with get_connection() as conn:
-            conn.execute("""
-                INSERT INTO users (username, password_hash, created_at)
-                VALUES (?, ?, ?)
-            """, (
-                username,
-                hash_password(password),
-                datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            ))
-        return True
-    except sqlite3.IntegrityError:
-        return False
-
-
-def verify_user(username, password):
-    with get_connection() as conn:
-        result = conn.execute("""
-            SELECT password_hash
-            FROM users
-            WHERE username = ?
-        """, (username,)).fetchone()
-
-    if result is None:
-        return False
-
-    return hmac.compare_digest(
-        result[0],
-        hash_password(password)
-    )
-
-
-def save_prediction(username, car_name, year, km_driven, price):
+def save_prediction(car_name, year, km_driven, price):
     with get_connection() as conn:
         conn.execute("""
             INSERT INTO prediction_history
-            (username, car_name, year, km_driven, predicted_price, created_at)
+            (username, car_name, year, km_driven,
+             predicted_price, created_at)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (
-            username,
-            car_name,
+            "Guest",
+            str(car_name),
             int(year),
             int(km_driven),
             float(price),
@@ -271,15 +201,14 @@ def save_prediction(username, car_name, year, km_driven, price):
         ))
 
 
-def get_user_history(username):
+def get_prediction_history():
     with get_connection() as conn:
         return pd.read_sql_query("""
             SELECT car_name, year, km_driven,
                    predicted_price, created_at
             FROM prediction_history
-            WHERE username = ?
             ORDER BY id DESC
-        """, conn, params=(username,))
+        """, conn)
 
 
 init_database()
@@ -359,8 +288,6 @@ def format_inr(amount):
 
 def predict_price(input_values):
     input_df = pd.DataFrame([input_values])
-
-    # Keep exactly the feature order used during training.
     input_df = input_df.reindex(columns=model_features)
 
     prediction = float(model.predict(input_df)[0])
@@ -368,155 +295,8 @@ def predict_price(input_values):
     return max(0, prediction)
 
 
-def section_heading(title, subtitle=None):
-    st.markdown(f"## {title}")
-
-    if subtitle:
-        st.caption(subtitle)
-
-
 # =====================================================
-# LOGIN / SIGNUP
-# =====================================================
-
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-
-if "username" not in st.session_state:
-    st.session_state.username = ""
-
-
-if not st.session_state.logged_in:
-
-    st.markdown("<div style='height:35px'></div>", unsafe_allow_html=True)
-
-    left, center, right = st.columns([1, 1.15, 1])
-
-    with center:
-        st.markdown(
-            """
-            <div style="text-align:center; padding:12px 0 22px;">
-                <div style="
-                    display:inline-block;
-                    padding:14px 18px;
-                    border-radius:20px;
-                    background:linear-gradient(135deg,#1d4ed8,#6366f1);
-                    font-size:38px;
-                    box-shadow:0 10px 35px rgba(59,130,246,.25);">
-                    🚘
-                </div>
-                <h1 style="margin-top:18px; margin-bottom:4px;">
-                    AutoValue <span style="color:#60a5fa;">AI</span>
-                </h1>
-                <p style="color:#9db0cb;">
-                    Smart car valuation powered by Machine Learning
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        login_tab, signup_tab = st.tabs([
-            "🔐 Login",
-            "✨ Create Account"
-        ])
-
-        with login_tab:
-            st.markdown("### Welcome back")
-            st.caption("Login kar aur apna dashboard access kar.")
-
-            with st.form("login_form"):
-                login_username = st.text_input(
-                    "Username",
-                    placeholder="Enter your username"
-                )
-
-                login_password = st.text_input(
-                    "Password",
-                    type="password",
-                    placeholder="Enter your password"
-                )
-
-                login_submit = st.form_submit_button(
-                    "Login to Dashboard →",
-                    use_container_width=True
-                )
-
-            if login_submit:
-                username = login_username.strip()
-
-                if not username or not login_password:
-                    st.warning("Username aur password dono bhar.")
-                elif verify_user(username, login_password):
-                    st.session_state.logged_in = True
-                    st.session_state.username = username
-                    st.rerun()
-                else:
-                    st.error("Invalid username ya password.")
-
-        with signup_tab:
-            st.markdown("### Create your account")
-            st.caption("Naya account bana aur AutoValue AI use kar.")
-
-            with st.form("signup_form"):
-                signup_username = st.text_input(
-                    "Choose Username",
-                    placeholder="Choose a username"
-                )
-
-                signup_password = st.text_input(
-                    "Create Password",
-                    type="password",
-                    placeholder="At least 6 characters"
-                )
-
-                confirm_password = st.text_input(
-                    "Confirm Password",
-                    type="password",
-                    placeholder="Enter password again"
-                )
-
-                signup_submit = st.form_submit_button(
-                    "Create Account ✨",
-                    use_container_width=True
-                )
-
-            if signup_submit:
-                username = signup_username.strip()
-
-                if len(username) < 3:
-                    st.warning("Username minimum 3 characters ka rakh.")
-                elif len(signup_password) < 6:
-                    st.warning("Password minimum 6 characters ka rakh.")
-                elif signup_password != confirm_password:
-                    st.error("Dono passwords match nahi kar rahe.")
-                else:
-                    created = create_user(username, signup_password)
-
-                    if created:
-                        st.success(
-                            "Account ban gaya! Ab Login tab se login kar."
-                        )
-                    else:
-                        st.error(
-                            "Ye username pehle se registered hai."
-                        )
-
-        st.markdown(
-            """
-            <p style="text-align:center; color:#7184a3;
-            font-size:12px; margin-top:24px;">
-                AutoValue AI · Intelligent Car Price Prediction
-            </p>
-            """,
-            unsafe_allow_html=True
-        )
-
-    st.stop()
-
-
-# =====================================================
-# MAIN APP / SIDEBAR
+# SIDEBAR NAVIGATION - NO LOGIN / NO LOGOUT
 # =====================================================
 
 with st.sidebar:
@@ -525,8 +305,8 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown("### 👋 Welcome")
-    st.markdown(f"**{st.session_state.username}**")
+    st.markdown("### 👋 Welcome!")
+    st.write("Predict used-car prices with Machine Learning.")
 
     st.divider()
 
@@ -544,11 +324,7 @@ with st.sidebar:
     st.divider()
 
     st.caption("Machine Learning • Random Forest")
-
-    if st.button("🚪 Logout", use_container_width=True):
-        st.session_state.logged_in = False
-        st.session_state.username = ""
-        st.rerun()
+    st.caption("AI-powered used car valuation")
 
 
 # =====================================================
@@ -557,17 +333,15 @@ with st.sidebar:
 
 if page == "🏠 Overview":
 
-    st.title("AutoValue AI")
+    st.title("🚘 AutoValue AI")
     st.markdown(
         "### Your smart assistant for estimating used car prices."
     )
 
-    st.markdown(
-        """
-        Estimate the market value of a used car using a trained
-        Machine Learning model. Explore dataset trends and review
-        your previous predictions from one dashboard.
-        """
+    st.write(
+        "Estimate the market value of a used car using a trained "
+        "Machine Learning model. Explore dataset trends and review "
+        "previous predictions from one dashboard."
     )
 
     st.divider()
@@ -598,12 +372,20 @@ if page == "🏠 Overview":
             "check kar."
         )
 
+        if st.button("Predict a Car Price →", use_container_width=True):
+            st.session_state.selected_page = "💰 Price Predictor"
+            st.rerun()
+
     with c2:
         st.markdown("### 📊 Analytics Dashboard")
         st.write(
             "Fuel type, transmission, car prices aur dataset ke "
             "patterns explore kar."
         )
+
+        if st.button("Explore Analytics →", use_container_width=True):
+            st.session_state.selected_page = "📊 Analytics Dashboard"
+            st.rerun()
 
     st.info(
         "Prediction ek estimate hai. Actual selling price car ki "
@@ -660,10 +442,7 @@ elif page == "💰 Price Predictor":
         col1, col2 = st.columns(2)
 
         with col1:
-            brand = st.selectbox(
-                "Car Brand",
-                brand_options
-            )
+            brand = st.selectbox("Car Brand", brand_options)
 
             year = st.number_input(
                 "Manufacturing Year",
@@ -681,10 +460,7 @@ elif page == "💰 Price Predictor":
                 step=1000
             )
 
-            fuel = st.selectbox(
-                "Fuel Type",
-                fuel_options
-            )
+            fuel = st.selectbox("Fuel Type", fuel_options)
 
         with col2:
             model_options = []
@@ -704,30 +480,13 @@ elif page == "💰 Price Predictor":
             model_options = sorted(model_options)
 
             if not model_options:
-                model_options = get_options(
-                    "model",
-                    ["Other"]
-                )
+                model_options = get_options("model", ["Other"])
 
-            car_model_name = st.selectbox(
-                "Car Model",
-                model_options
-            )
+            car_model_name = st.selectbox("Car Model", model_options)
 
-            seller_type = st.selectbox(
-                "Seller Type",
-                seller_options
-            )
-
-            transmission = st.selectbox(
-                "Transmission",
-                transmission_options
-            )
-
-            owner = st.selectbox(
-                "Owner Type",
-                owner_options
-            )
+            seller_type = st.selectbox("Seller Type", seller_options)
+            transmission = st.selectbox("Transmission", transmission_options)
+            owner = st.selectbox("Owner Type", owner_options)
 
         submitted = st.form_submit_button(
             "✨ Predict Car Price",
@@ -735,7 +494,6 @@ elif page == "💰 Price Predictor":
         )
 
     if submitted:
-
         input_values = {
             "brand": brand,
             "model": car_model_name,
@@ -782,7 +540,6 @@ elif page == "💰 Price Predictor":
             )
 
             save_prediction(
-                st.session_state.username,
                 f"{brand} {car_model_name}",
                 year,
                 km_driven,
@@ -982,7 +739,6 @@ elif page == "📊 Analytics Dashboard":
             )
 
     st.divider()
-
     st.markdown("### 📋 Filtered Dataset Preview")
 
     st.dataframe(
@@ -1003,15 +759,15 @@ elif page == "📊 Analytics Dashboard":
 
 
 # =====================================================
-# PREDICTION HISTORY
+# PREDICTION HISTORY - SHARED
 # =====================================================
 
 elif page == "🕘 Prediction History":
 
     st.title("🕘 Prediction History")
-    st.caption("Teri previous car price predictions.")
+    st.caption("Previous predictions made in this application.")
 
-    history = get_user_history(st.session_state.username)
+    history = get_prediction_history()
 
     if history.empty:
         st.info(
@@ -1056,12 +812,10 @@ elif page == "🕘 Prediction History":
             hide_index=True
         )
 
-        original_history = history.copy()
-
         st.download_button(
-            "⬇️ Download My Prediction History",
-            data=original_history.to_csv(index=False).encode("utf-8"),
-            file_name="my_prediction_history.csv",
+            "⬇️ Download Prediction History",
+            data=history.to_csv(index=False).encode("utf-8"),
+            file_name="autovalue_prediction_history.csv",
             mime="text/csv",
             use_container_width=True
         )
